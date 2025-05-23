@@ -92,6 +92,58 @@ void free_board(Board* b) {
 
 // ============================================================================
 
+typedef struct {
+  int x;
+  int y;
+} Point;
+
+typedef struct {
+  Point start;
+  Point end;
+  char direction;
+} SnakeData;
+
+void init_snake(SnakeData* snake) {
+  snake->start = (Point){.x = 5, .y = 0};
+  snake->end = (Point){.x = 0, .y = 0};
+  snake->direction = 'e';
+}
+
+void init_snake_on_board(Board* b, SnakeData* s) {
+  Point snake_body = s->end;
+  while(snake_body.x != s->start.x || snake_body.y != s->start.y) {
+    b->map[snake_body.y][snake_body.x] = Snake;  
+    switch(s->direction) {
+      case 'e':
+        snake_body.x++;
+        break;
+      default:
+        printf("unsupported direction %c\n", s->direction);
+        //exit(1);
+    }
+  }
+}
+
+void update_snake(Board* b, SnakeData* s) {
+  // snake head
+  switch(s->direction) {
+    case 'e':
+      b->map[s->start.y][(s->start.x)++] = Snake;
+      break;
+    default:
+      printf("unsupported direction %c\n", s->direction);
+  }
+
+  // snake butt
+  // check right
+  if(s->end.x < b->size_x && b->map[s->end.y][s->end.x+1] == Snake) {
+    b->map[s->end.y][s->end.x++] = Empty;
+  }
+
+}
+
+// ============================================================================
+
 void clear_screen() {
     printf("\033[H\033[J");
 }
@@ -105,11 +157,15 @@ void main_loop() {
 
   Board b;
   init_empty_board(&b, 20, 10);
+  //b.map[0][0] = Snake;
+  SnakeData snake;
+  init_snake(&snake);
+  init_snake_on_board(&b, &snake);
 
+    print_board(&b);
   for(;;) { 
     clear_screen();
 
-    print_board(&b);
     int ret = poll(fds, 1, 50);
 
     if (ret == -1) {
@@ -122,7 +178,11 @@ void main_loop() {
       if(c == 'q') break;
     }
 
-    usleep(100000);
+    update_snake(&b, &snake);
+
+    print_board(&b);
+    usleep(300000);
+    
   }
 
   free_board(&b);
