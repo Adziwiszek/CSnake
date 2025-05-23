@@ -3,6 +3,7 @@
 #include <pthread.h>
 #include <termios.h>
 #include <unistd.h>
+#include <poll.h>
 
 void set_input_mode(int enable) {
   static struct termios oldt, newt;
@@ -91,75 +92,40 @@ void free_board(Board* b) {
 
 // ============================================================================
 
-typedef struct {
-  char input;
-  int buffer_full;
-  pthread_mutex_t mutex;
-  pthread_cond_t new_input;
-  pthread_cond_t input_consumed;
-} InputBuffer;
-
-InputBuffer shared_buffer = {
-  .input = ' ',
-  .buffer_full = 0,
-  .mutex = PTHREAD_MUTEX_INITIALIZER,
-  .new_input = PTHREAD_COND_INITIALIZER,
-  .input_consumed = PTHREAD_COND_INITIALIZER
-};
-
-char buffer_put() {
-  pthread_mutex_lock(&shared_buffer.mutex);
-
-  while(shared_buffer.buffer_full)
-    pthread_cond_wait(&shared_buffer.input_consumed, &shared_buffer.mutex);
-
-  char c = getchar();
-
-  shared_buffer.buffer_full = 1;
-  shared_buffer.input = c;
-
-  pthread_cond_signal(&shared_buffer.new_input);
-
-  pthread_mutex_unlock(&shared_buffer.mutex);
-
-  return c;
+void clear_screen() {
+    printf("\033[H\033[J");
 }
 
-char buffer_get() {
-  pthread_mutex_lock(&shared_buffer.mutex);
+void main_loop() {
+  struct pollfd fds[1];
+  fds[0].fd = STDIN_FILENO;
+  fds[0].events = POLLIN;
 
-  while(!shared_buffer.buffer_full)
-    pthread_cond_wait(&shared_buffer.new_input, &shared_buffer.mutex);
-   
-  char c = shared_buffer.input;
-  shared_buffer.buffer_full = 0;
+  int fps = 60;
 
-  pthread_cond_signal(&shared_buffer.input_consumed);
+  Board b;
+  init_empty_board(&b, 20, 10);
 
-  pthread_mutex_unlock(&shared_buffer.mutex);
+  for(;;) { 
+    clear_screen();
 
-  return c;
-}
+    print_board(&b);
+    int ret = poll(fds, 1, 50);
 
-void* input_loop() {
-  for(;;) {
-    char c = buffer_put();
-    if(c == 'q') {
-      break;
+    if (ret == -1) {
+        perror("poll");
+    } else if (ret == 0) {
+        //printf("Czas minął!\n");
+    } else if (fds[0].revents & POLLIN) {
+      char c = getchar();
+      printf("Nacisnąłeś: %c\n", c);
+      if(c == 'q') break;
     }
-  }
-  return NULL;
-}
 
-void* main_loop() {
-  for(;;) {
-    char input = buffer_get();
-    printf("%c\n", input);
-    if(input == 'q') {
-      break;
-    }
+    usleep(100000);
   }
-  return NULL;
+
+  free_board(&b);
 }
 
 // ============================================================================
@@ -170,8 +136,9 @@ int main() {
   print_board(&b);
   free_board(&b);*/
   set_input_mode(1);
+  main_loop();
 
-  pthread_t main_loop_thread, input_thread;
+  /*pthread_t main_loop_thread, input_thread;
   int ml_id = 1, inp_id = 1;
 
   pthread_create(&input_thread, NULL, input_loop, &inp_id);
@@ -179,6 +146,7 @@ int main() {
 
   pthread_join(main_loop_thread, NULL);
   pthread_join(input_thread, NULL);
+  */
 
   set_input_mode(0);
 
