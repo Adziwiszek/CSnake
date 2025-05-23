@@ -106,7 +106,7 @@ typedef struct {
 void init_snake(SnakeData* snake) {
   snake->start = (Point){.x = 5, .y = 0};
   snake->end = (Point){.x = 0, .y = 0};
-  snake->direction = 'e';
+  snake->direction = 'd';
 }
 
 void init_snake_on_board(Board* b, SnakeData* s) {
@@ -114,7 +114,7 @@ void init_snake_on_board(Board* b, SnakeData* s) {
   while(snake_body.x != s->start.x || snake_body.y != s->start.y) {
     b->map[snake_body.y][snake_body.x] = Snake;  
     switch(s->direction) {
-      case 'e':
+      case 'd':
         snake_body.x++;
         break;
       default:
@@ -127,17 +127,35 @@ void init_snake_on_board(Board* b, SnakeData* s) {
 void update_snake(Board* b, SnakeData* s) {
   // snake head
   switch(s->direction) {
-    case 'e':
+    case 'd':
       b->map[s->start.y][(s->start.x)++] = Snake;
+      break;
+    case 'a':
+      b->map[s->start.y][(s->start.x)--] = Snake;
+      break;
+    case 's':
+      b->map[(s->start.y)++][s->start.x] = Snake;
+      break;
+    case 'w':
+      b->map[(s->start.y)--][s->start.x] = Snake;
       break;
     default:
       printf("unsupported direction %c\n", s->direction);
   }
 
   // snake butt
-  // check right
   if(s->end.x < b->size_x && b->map[s->end.y][s->end.x+1] == Snake) {
+    // check right
     b->map[s->end.y][s->end.x++] = Empty;
+  } else if(s->end.x < b->size_x && b->map[s->end.y][s->end.x-1] == Snake) {
+    // check left
+    b->map[s->end.y][s->end.x--] = Empty;
+  } else if(s->end.y+1 < b->size_y && b->map[s->end.y+1][s->end.x] == Snake) {
+    // check down
+    b->map[s->end.y++][s->end.x] = Empty;
+  } else if(s->end.y < b->size_y && b->map[s->end.y-1][s->end.x] == Snake) {
+    // check up
+    b->map[s->end.y--][s->end.x] = Empty;
   }
 
 }
@@ -162,7 +180,6 @@ void main_loop() {
   init_snake(&snake);
   init_snake_on_board(&b, &snake);
 
-    print_board(&b);
   for(;;) { 
     clear_screen();
 
@@ -174,8 +191,13 @@ void main_loop() {
         //printf("Czas minął!\n");
     } else if (fds[0].revents & POLLIN) {
       char c = getchar();
-      printf("Nacisnąłeś: %c\n", c);
-      if(c == 'q') break;
+      //printf("Nacisnąłeś: %c\n", c);
+      if(c == 'w' || c == 's' || c == 'a' || c == 'd') snake.direction = c;
+      if(c == 'q') {
+
+        print_board(&b);
+        break;
+      }
     }
 
     update_snake(&b, &snake);
