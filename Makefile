@@ -5,6 +5,9 @@ OBJ_DIR = obj
 SRC_DIR = .
 BIN = CSnake
 
+# nanosleep
+CFLAGS += -D_POSIX_C_SOURCE=200809L
+
 # Find all source files
 SRCS = $(wildcard $(SRC_DIR)/*.c)
 OBJS = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRCS))
