@@ -4,6 +4,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <time.h>
+#include <fcntl.h>
 #include <poll.h>
 
 
@@ -176,61 +177,6 @@ void set_snake_direction(char c, SnakeData* s) {
 
 // ============================================================================
 
-typedef struct {
-  int valid;
-  char c;
-} OptChar;
-
-typedef struct {
-  char input;
-  int buffer_full;
-  pthread_mutex_t mutex;
-  pthread_cond_t new_input;
-  pthread_cond_t input_consumed;
-} InputBuffer;
-
-InputBuffer shared_buffer = {
-  .input = ' ',
-  .buffer_full = 0,
-  .mutex = PTHREAD_MUTEX_INITIALIZER,
-  .new_input = PTHREAD_COND_INITIALIZER,
-  .input_consumed = PTHREAD_COND_INITIALIZER
-};
-
-char buffer_put() {
-  pthread_mutex_lock(&shared_buffer.mutex);
-  while(shared_buffer.buffer_full)
-    pthread_cond_wait(&shared_buffer.input_consumed, &shared_buffer.mutex);
-  char c = getchar();
-  shared_buffer.buffer_full = 1;
-  shared_buffer.input = c;
-  pthread_cond_signal(&shared_buffer.new_input);
-  pthread_mutex_unlock(&shared_buffer.mutex);
-  return c;
-}
-
-OptChar buffer_get() {
-  pthread_mutex_lock(&shared_buffer.mutex);
-  if(!shared_buffer.buffer_full) {
-    return (OptChar){.valid=0, .c='a'};
-  }
-  char c = shared_buffer.input;
-  shared_buffer.buffer_full = 0;
-  pthread_cond_signal(&shared_buffer.input_consumed);
-  pthread_mutex_unlock(&shared_buffer.mutex);
-  return (OptChar){.valid=1, .c=c};
-}
-
-void* input_loop() {
-  for(;;) {
-    char c = buffer_put();
-    if(c == 'q') {
-      break;
-    }
-  }
-  return NULL;
-}
-
 void clear_screen() {
   printf("\033[H\033[J");
 }
@@ -251,6 +197,14 @@ void set_input_mode(int enable) {
     newt.c_lflag &= ~(ICANON | ECHO); 
     tcsetattr(STDIN_FILENO, TCSANOW, &newt); 
   }
+}
+
+void flush_stdin() {
+  int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+  fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+  char tmp;
+  while (read(STDIN_FILENO, &tmp, 1) == 1) { }
+  fcntl(STDIN_FILENO, F_SETFL, flags);
 }
 
 void main_loop() {
@@ -278,6 +232,7 @@ void main_loop() {
         //printf("Czas minął!\n");
     } else if (fds[0].revents & POLLIN) {
       char c = getchar();
+      flush_stdin();
       if(c == 'w' || c == 's' || c == 'a' || c == 'd') set_snake_direction(c, &snake);
       if(c == 'q') {
         print_board(&b);
@@ -294,50 +249,22 @@ void main_loop() {
   free_board(&b);
 }
 
-void* main_loop_2() {
-  Board b;
-  init_empty_board(&b, 20, 10);
-  //b.map[0][0] = Snake;
-  SnakeData snake;
-  init_snake(&snake);
-  init_snake_on_board(&b, &snake);
-
-  for(;;) {
-    clear_screen();
-
-    OptChar input = buffer_get();
-    if(input.valid) {
-      printf("%c\n", input.c);
-      if(input.c == 'q') {
-        break;
-      }
-    }
-
-    update_snake(&b, &snake);
-
-    print_board(&b);
-    nanosleep(&ts, NULL);
-  }
-  free_board(&b);
-
-  return NULL;
-}
 
 // ============================================================================
 
 int main() {
   //set_input_mode(0);
   set_input_mode(1);
-  //main_loop();
+  main_loop();
 
-  pthread_t main_loop_thread, input_thread;
+  /*pthread_t main_loop_thread, input_thread;
   int ml_id = 1, inp_id = 1;
 
   pthread_create(&input_thread, NULL, input_loop, &inp_id);
   pthread_create(&main_loop_thread, NULL, main_loop_2, &ml_id);
 
   pthread_join(main_loop_thread, NULL);
-  pthread_join(input_thread, NULL);
+  pthread_join(input_thread, NULL);*/
 
   set_input_mode(0);
 
