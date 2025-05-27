@@ -6,7 +6,19 @@
 #include <time.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <time.h>
 
+#define MAX_FOOD 3
+#define MIN_REFRESH_TIME 1000000L
+#define SNAKE_SYMBOL "O"
+#define SNAKE_OPEN_MOUTH "●"
+#define FOOD_SYMBOL "𝛅"
+#define FlOOR_SYMBOL "▫"
+
+#define max(a,b) \
+   ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+     _a > _b ? _a : _b; })
 
 void clear_screen() {
   printf("\033[H\033[J");
@@ -16,6 +28,7 @@ struct timespec ts = {
   .tv_sec = 0,
   .tv_nsec = 300000000L  // 300 ms
 };
+int updated_time = 1;
 
 void set_input_mode(int enable) {
   static struct termios oldt, newt;
@@ -44,41 +57,84 @@ void exit_program(char* message) {
   exit(1);
 }
 
+//-----------------------------------------------------------------------------
+
+typedef enum {
+  UP,
+  DOWN,
+  LEFT,
+  RIGHT,
+  NIL,
+} Dir;
+
+typedef struct {
+  int x;
+  int y;
+} Point;
+
+typedef struct {
+  Dir **dirMap;
+  Point start;
+  Point end;
+  int tummy;
+  int animation;
+  Dir direction;
+} SnakeData;
+
 // ============================================================================
 
 typedef enum {
   Empty,
   Snake,
+  Food,
 } BoardField;
 
 typedef struct {
   BoardField **map;
   int size_x;
   int size_y;
+  int food;
 } Board;
 
-void print_field(Board* b, int i, int j) {
+void generate_food(Board*b, int prob) {
+  int make_food = rand() % 100;
+  if(make_food > prob && b->food < MAX_FOOD) {
+    int new_x = rand() % b->size_x;
+    int new_y = rand() % b->size_y;
+    b->map[new_y][new_x] = Food;
+    b->food++;
+  }
+}
+
+void print_field(Board* b, SnakeData* s, int i, int j) {
   switch(b->map[i][j]) {
     case Empty:
-      printf(".");
+      printf(FlOOR_SYMBOL);
       break;
-
     case Snake:
-      printf("O");
+      if(!s->animation && i == s->start.y && j == s->start.x) {
+        printf(SNAKE_OPEN_MOUTH);
+      } else {
+        printf(SNAKE_SYMBOL);
+      }
+      break;
+    case Food:
+      printf(FOOD_SYMBOL);
       break;
   }
 }
 
-void print_board(Board* b) {
+void print_board(Board* b, SnakeData* s) {
   for(int i = 0; i < b->size_y; i++) {
     for(int j = 0; j < b->size_x; j++) {
-      print_field(b, i, j);
+      print_field(b, s, i, j);
     }
     printf("\n");
   }
 }
 
 void init_empty_board(Board* b, int size_x, int size_y) {
+  b->food = 0;
   b->size_y = size_y;
   b->size_x = size_x;
 
@@ -118,30 +174,13 @@ void free_board(Board* b) {
 
 // ============================================================================
 
-typedef enum {
-  UP,
-  DOWN,
-  LEFT,
-  RIGHT,
-  NIL,
-} Dir;
-
-typedef struct {
-  int x;
-  int y;
-} Point;
-
-typedef struct {
-  Point start;
-  Point end;
-  Dir direction;
-  Dir **dirMap;
-} SnakeData;
 
 void init_snake(SnakeData* snake, Board* b) {
   snake->start = (Point){.x = 5, .y = 0};
   snake->end = (Point){.x = 0, .y = 0};
   snake->direction = RIGHT;
+  snake->tummy = 0;
+  snake->animation = 0;
 
   snake->dirMap = malloc(b->size_y * sizeof(Dir*));
   if(snake->dirMap == NULL) {
@@ -195,6 +234,7 @@ void free_snake(SnakeData* s, int board_size_y) {
 }
 
 void update_snake(SnakeData* s, Board* b) {
+  s->animation = s->animation == 0 ? 1 : 0;
   // change the direction at the turn
   s->dirMap[s->start.y][s->start.x] = s->direction; 
   // snake head
@@ -220,8 +260,20 @@ void update_snake(SnakeData* s, Board* b) {
     exit_program("snake went out of bounds");
   }
   s->dirMap[s->start.y][s->start.x] = s->direction; 
+  if(b->map[s->start.y][s->start.x] == Snake) {
+    exit_program("snake eating itself!");
+  }
+  int ate = 0;
+  if(b->map[s->start.y][s->start.x] == Food) {
+    ate = 1;
+    updated_time = 0;
+    s->tummy++;
+    b->food--;
+  }
   b->map[s->start.y][s->start.x] = Snake;
 
+  // if we ate food we make our snake longer by not reducing tail this frame
+  if(ate) return;
   // snake butt
   Point old_end = s->end;
   b->map[s->end.y][s->end.x] = Empty;
@@ -296,17 +348,14 @@ void print_snake_directions(SnakeData* s, Board* b) {
 
 // ============================================================================
 
-
 void main_loop() {
   struct pollfd fds[1];
   fds[0].fd = STDIN_FILENO;
   fds[0].events = POLLIN;
 
-  //int fps = 60;
-
   Board b;
   init_empty_board(&b, 20, 10);
-  //b.map[0][0] = Snake;
+  b.map[4][4] = Food;
   SnakeData snake;
   init_snake(&snake, &b);
 
@@ -318,21 +367,28 @@ void main_loop() {
     if (ret == -1) {
         perror("poll");
     } else if (ret == 0) {
-        //printf("Czas minął!\n");
     } else if (fds[0].revents & POLLIN) {
       char c = getchar();
       flush_stdin();
       if(c == 'w' || c == 's' || c == 'a' || c == 'd') set_snake_direction(c, &snake);
       if(c == 'q') {
-        print_board(&b);
+        print_board(&b, &snake);
         //print_snake_directions(&snake, &b);
         break;
       }
     }
 
     update_snake(&snake, &b);
+    if(snake.tummy % 4 == 0 && !updated_time) {
+      ts.tv_nsec -= 10000000;
+      ts.tv_nsec = max(ts.tv_nsec, MIN_REFRESH_TIME);
+      updated_time = 1;
+    }
+    generate_food(&b, 75);
 
-    print_board(&b);
+    print_board(&b, &snake);
+    printf("food on board: %d\n", b.food);
+    printf("current refresh rate: %ld\n", ts.tv_nsec);
     //print_snake_directions(&snake, &b);
     nanosleep(&ts, NULL);
   }
@@ -345,6 +401,8 @@ void main_loop() {
 // ============================================================================
 
 int main() {
+  srand(time(NULL));
+
   set_input_mode(1);
   main_loop();
   set_input_mode(0);
