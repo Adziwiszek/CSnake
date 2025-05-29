@@ -8,12 +8,13 @@
 #include <poll.h>
 #include <time.h>
 
-#define MAX_FOOD 3
+#define MAX_FOOD 1
 #define MIN_REFRESH_TIME 1000000L
 #define SNAKE_SYMBOL "O"
-#define SNAKE_OPEN_MOUTH "●"
+#define SNAKE_OPEN_MOUTH "O"
 #define FOOD_SYMBOL "𝛅"
-#define FlOOR_SYMBOL "▫"
+#define FlOOR_SYMBOL "."
+#define BORDER_SYMBOL "▣"
 
 #define max(a,b) \
    ({ __typeof__ (a) _a = (a); \
@@ -98,9 +99,10 @@ typedef struct {
 
 void generate_food(Board*b, int prob) {
   int make_food = rand() % 100;
-  if(make_food > prob && b->food < MAX_FOOD) {
+  if(make_food > prob && b->food <= MAX_FOOD) {
     int new_x = rand() % b->size_x;
     int new_y = rand() % b->size_y;
+    if(b->map[new_y][new_x] == Snake) return;
     b->map[new_y][new_x] = Food;
     b->food++;
   }
@@ -128,6 +130,17 @@ void print_board(Board* b, SnakeData* s) {
   for(int i = 0; i < b->size_y; i++) {
     for(int j = 0; j < b->size_x; j++) {
       print_field(b, s, i, j);
+    }
+    printf("\n");
+  }
+  return;
+  for(int i = 0; i < b->size_y+2; i++) {
+    for(int j = 0; j < b->size_x+2; j++) {
+      if(i == 0 || j == 0 || j > b->size_x || i > b->size_y) {
+        printf(BORDER_SYMBOL);
+      } else {
+        print_field(b, s, i, j);
+      }
     }
     printf("\n");
   }
@@ -301,16 +314,20 @@ void update_snake(SnakeData* s, Board* b) {
 void set_snake_direction(char c, SnakeData* s) {
   switch(c) {
     case 'd':
-      s->direction = RIGHT;
+      if(s->direction != LEFT)
+        s->direction = RIGHT;
       break;
     case 'a':
-      s->direction = LEFT;
+      if(s->direction != RIGHT)
+        s->direction = LEFT;
       break;
     case 'w':
-      s->direction = UP;
+      if(s->direction != DOWN)
+        s->direction = UP;
       break;
     case 's':
-      s->direction = DOWN;
+      if(s->direction != UP)
+        s->direction = DOWN;
       break;
     default:
       printf("unsuported input: %c\n", c);
@@ -387,6 +404,7 @@ void main_loop() {
     generate_food(&b, 75);
 
     print_board(&b, &snake);
+    printf("player score: %d\n", snake.tummy);
     printf("food on board: %d\n", b.food);
     printf("current refresh rate: %ld\n", ts.tv_nsec);
     //print_snake_directions(&snake, &b);
