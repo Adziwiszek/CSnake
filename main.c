@@ -1,8 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <stdarg.h>
 #include <pthread.h>
 #include <termios.h>
-#include <unistd.h>
 #include <time.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -23,6 +24,7 @@
 
 void clear_screen() {
   printf("\033[H\033[J");
+
 }
     
 struct timespec ts = {
@@ -52,10 +54,78 @@ void flush_stdin() {
   fcntl(STDIN_FILENO, F_SETFL, flags);
 }
 
-void exit_program(char* message) {
-  printf("Message: %s\n", message);
+void exit_program(const char* message, ...) {
+  va_list args;
+  va_start(args, message);
+
+  char buffer[512];
+  vsnprintf(buffer, sizeof(buffer), message, args);
+  va_end(args);
+
+  fprintf(stderr, "Error: %s\n", buffer);
   set_input_mode(0);
   exit(1);
+}
+
+float rand_float(float a, float b) {
+  return a + (b - a) * ((float) rand() / RAND_MAX);
+}
+
+//-----------------------------------------------------------------------------
+
+typedef struct {
+  float** mat;
+  int rows;
+  int cols;
+} Matrix;
+
+Matrix alloc_matrix(int n, int m) {
+  float** mat = malloc(n * sizeof(float*));
+  for(int i = 0; i < n; i++) {
+    mat[i] = malloc(m * sizeof(float));
+  }
+  return (Matrix){.mat=mat, .rows=n, .cols=m};
+}
+
+void free_matrix(Matrix* A) {
+  for(int i = 0; i < A->rows; i++) {
+    free(A->mat[i]); 
+  }
+  free(A->mat);
+}
+
+void rand_matrix(Matrix* A, float a, float b) {
+  for(int i = 0; i < A->rows; i++) {
+    for(int j = 0; j < A->cols; j++) {
+      A->mat[i][j] = rand_float(a, b);
+    }
+  }
+}
+
+void matmul(Matrix* A, Matrix* B, Matrix* C) {
+  if(A->cols != B->rows || C->rows != A->rows || C->cols != B->cols) {
+    exit_program(
+      "Tried to multiply matricies with sizes %dx%d, %dx%d to get matrix %dx%d",
+      A->rows, A->cols, B->rows, B->cols, C->rows, C->cols);
+  }
+
+  for(int i = 0; i < C->rows; i++) {
+    for(int j = 0; j < C->cols; j++) {
+      for(int k = 0; k < A->cols; k++) {
+        C->mat[i][j] += A->mat[i][k] * B->mat[k][j];
+      }
+    }
+  }
+}
+
+void print_matrix(Matrix* A) {
+  printf("%d x %d\n", A->rows, A->cols);
+  for(int i = 0; i < A->rows; i++) {
+    for(int j = 0; j < A->cols; j++) {
+      printf("%f  ", A->mat[i][j]);
+    }
+    printf("\n");
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -189,7 +259,7 @@ void free_board(Board* b) {
 
 
 void init_snake(SnakeData* snake, Board* b) {
-  snake->start = (Point){.x = 5, .y = 0};
+  snake->start = (Point){.x = 1, .y = 0};
   snake->end = (Point){.x = 0, .y = 0};
   snake->direction = RIGHT;
   snake->tummy = 0;
@@ -365,13 +435,37 @@ void print_snake_directions(SnakeData* s, Board* b) {
 
 // ============================================================================
 
+/* 
+ * model
+ * params
+ */
+void train() {
+  /*
+  FOR each episode:
+    reset environment
+    s = initial state
+
+    WHILE not done:
+        choose a from s using epsilon-greedy
+        take action a → get s', r, done
+        store (s, a, r, s', done)
+        sample batch and train Q
+        s ← s'
+
+    decay epsilon
+  END
+  */
+}
+
+//------------------------------------------------------------------------------
+
 void main_loop() {
   struct pollfd fds[1];
   fds[0].fd = STDIN_FILENO;
   fds[0].events = POLLIN;
 
   Board b;
-  init_empty_board(&b, 20, 10);
+  init_empty_board(&b, 8, 8);
   b.map[4][4] = Food;
   SnakeData snake;
   init_snake(&snake, &b);
@@ -422,7 +516,24 @@ int main() {
   srand(time(NULL));
 
   set_input_mode(1);
+
+  /*
+  Matrix A = alloc_matrix(2, 4);
+  Matrix B = alloc_matrix(4, 2);
+  Matrix C = alloc_matrix(2, 2);
+  rand_matrix(&A, 0.0, 1.0);
+  rand_matrix(&B, 0.0, 1.0);
+  print_matrix(&A);
+  print_matrix(&B);
+  matmul(&A, &B, &C);
+  print_matrix(&C);
+  free_matrix(&A);
+  free_matrix(&B);
+  free_matrix(&C);
+  */
+
   main_loop();
+
   set_input_mode(0);
   return 0;
 }
