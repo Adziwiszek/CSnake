@@ -11,6 +11,8 @@
 
 #define MAX_FOOD 1
 #define MIN_REFRESH_TIME 1000000L
+#define MAX_EXP_SIZE 1000
+
 #define SNAKE_SYMBOL "O"
 #define SNAKE_OPEN_MOUTH "O"
 #define FOOD_SYMBOL "𝛅"
@@ -22,9 +24,60 @@
        __typeof__ (b) _b = (b); \
      _a > _b ? _a : _b; })
 
+typedef enum {
+  UP,
+  DOWN,
+  LEFT,
+  RIGHT,
+  NIL,
+} Dir;
+
+typedef struct {
+  int x;
+  int y;
+} Point;
+
+typedef struct {
+  Dir **dirMap;
+  Point start;
+  Point end;
+  int tummy;
+  int animation;
+  Dir direction;
+} SnakeData;
+
+typedef enum {
+  Empty,
+  Snake,
+  Food,
+  Border,
+} BoardField;
+
+typedef struct {
+  BoardField **map;
+  int size_x;
+  int size_y;
+  int food;
+} Board;
+
+typedef struct {
+  BoardField** old_state;
+  BoardField** new_state;
+  Dir move;
+  int done;
+} Exp;
+
+typedef struct {
+  Exp arr[MAX_EXP_SIZE];
+  size_t id;
+} ExpArray;
+
+void add_experience(ExpArray* arr, Exp e) {
+  arr->arr[arr->id++] = e;
+}
+
 void clear_screen() {
   printf("\033[H\033[J");
-
 }
     
 struct timespec ts = {
@@ -130,49 +183,16 @@ void print_matrix(Matrix* A) {
 
 //-----------------------------------------------------------------------------
 
-typedef enum {
-  UP,
-  DOWN,
-  LEFT,
-  RIGHT,
-  NIL,
-} Dir;
-
-typedef struct {
-  int x;
-  int y;
-} Point;
-
-typedef struct {
-  Dir **dirMap;
-  Point start;
-  Point end;
-  int tummy;
-  int animation;
-  Dir direction;
-} SnakeData;
-
-// ============================================================================
-
-typedef enum {
-  Empty,
-  Snake,
-  Food,
-} BoardField;
-
-typedef struct {
-  BoardField **map;
-  int size_x;
-  int size_y;
-  int food;
-} Board;
+int lost_game = 0;
 
 void generate_food(Board*b, int prob) {
   int make_food = rand() % 100;
   if(make_food > prob && b->food <= MAX_FOOD) {
     int new_x = rand() % b->size_x;
     int new_y = rand() % b->size_y;
-    if(b->map[new_y][new_x] == Snake) return;
+    if(b->map[new_y][new_x] == Snake ||
+       new_y == 0 || new_x == 0 ||
+       new_y == b->size_y-1 || new_x == b->size_x-1) return;
     b->map[new_y][new_x] = Food;
     b->food++;
   }
@@ -193,6 +213,9 @@ void print_field(Board* b, SnakeData* s, int i, int j) {
     case Food:
       printf(FOOD_SYMBOL);
       break;
+    case Border:
+      printf(BORDER_SYMBOL);
+      break;
   }
 }
 
@@ -200,17 +223,6 @@ void print_board(Board* b, SnakeData* s) {
   for(int i = 0; i < b->size_y; i++) {
     for(int j = 0; j < b->size_x; j++) {
       print_field(b, s, i, j);
-    }
-    printf("\n");
-  }
-  return;
-  for(int i = 0; i < b->size_y+2; i++) {
-    for(int j = 0; j < b->size_x+2; j++) {
-      if(i == 0 || j == 0 || j > b->size_x || i > b->size_y) {
-        printf(BORDER_SYMBOL);
-      } else {
-        print_field(b, s, i, j);
-      }
     }
     printf("\n");
   }
@@ -241,7 +253,12 @@ void init_empty_board(Board* b, int size_x, int size_y) {
   
   for(int i = 0; i < b->size_y; i++) {
     for(int j = 0; j < b->size_x; j++) {
-      b->map[i][j] = Empty;
+      if(i == 0 || j == 0 || j == b->size_x - 1 || i == b->size_y - 1) {
+        b->map[i][j] = Border;
+      }
+      else {
+        b->map[i][j] = Empty;
+      }
     }
   }
 }
@@ -257,10 +274,9 @@ void free_board(Board* b) {
 
 // ============================================================================
 
-
 void init_snake(SnakeData* snake, Board* b) {
-  snake->start = (Point){.x = 1, .y = 0};
-  snake->end = (Point){.x = 0, .y = 0};
+  snake->start = (Point){.x = 3, .y = 2};
+  snake->end = (Point){.x = 2, .y = 2};
   snake->direction = RIGHT;
   snake->tummy = 0;
   snake->animation = 0;
@@ -343,8 +359,11 @@ void update_snake(SnakeData* s, Board* b) {
     exit_program("snake went out of bounds");
   }
   s->dirMap[s->start.y][s->start.x] = s->direction; 
-  if(b->map[s->start.y][s->start.x] == Snake) {
-    exit_program("snake eating itself!");
+  if(b->map[s->start.y][s->start.x] == Snake ||
+      b->map[s->start.y][s->start.x] == Border) {
+    //exit_program("snake eating itself!");
+    lost_game = 1;
+    return;
   }
   int ate = 0;
   if(b->map[s->start.y][s->start.x] == Food) {
@@ -435,6 +454,68 @@ void print_snake_directions(SnakeData* s, Board* b) {
 
 // ============================================================================
 
+char dir_to_char(Dir m) {
+  switch(m) {
+    case LEFT:
+      return 'a';
+      break;
+    case RIGHT:
+      return 'd';
+      break;
+    case UP:
+      return 'w';
+      break;
+    case DOWN:
+      return 's';
+      break;
+    case NIL:
+      return 'a';
+      break;
+  }
+}
+
+void reset_env();
+Dir e_greedy() {
+  int p = (rand() % 100) % 4;
+  switch(p) {
+    case 0:
+      return LEFT;
+    case 1:
+      return RIGHT;
+    case 2:
+      return UP;
+    case 3:
+      return DOWN;
+  }
+  return DOWN;
+}
+
+void execute_move(SnakeData *s, Dir move) {
+  set_snake_direction(dir_to_char(move), s); 
+}
+
+ExpArray replay_buffer;
+
+void run_simulation(Board* b, SnakeData *s, int verbose) {
+  while(!lost_game) {
+    Dir move = e_greedy();
+
+    execute_move(s, move);
+    update_snake(s, b);
+    generate_food(b, 50);
+
+    if(verbose) {
+      clear_screen();
+      print_board(b, s);
+      printf("Snake made move: %c\n", dir_to_char(move));
+      nanosleep(&ts, NULL);
+    }
+  }
+
+  lost_game = 0;
+  return;
+}
+
 /* 
  * model
  * params
@@ -465,7 +546,7 @@ void main_loop() {
   fds[0].events = POLLIN;
 
   Board b;
-  init_empty_board(&b, 8, 8);
+  init_empty_board(&b, 10, 10);
   b.map[4][4] = Food;
   SnakeData snake;
   init_snake(&snake, &b);
@@ -495,7 +576,12 @@ void main_loop() {
       ts.tv_nsec = max(ts.tv_nsec, MIN_REFRESH_TIME);
       updated_time = 1;
     }
-    generate_food(&b, 75);
+    if(lost_game) {
+      print_board(&b, &snake);
+      printf("Lost game!\n");
+      return;
+    }
+    generate_food(&b, 40);
 
     print_board(&b, &snake);
     printf("player score: %d\n", snake.tummy);
@@ -532,7 +618,17 @@ int main() {
   free_matrix(&C);
   */
 
-  main_loop();
+  //main_loop();
+
+  Board b;
+  init_empty_board(&b, 10, 10);
+  SnakeData snake;
+  init_snake(&snake, &b);
+
+  run_simulation(&b, &snake, 1);
+
+  free_snake(&snake, b.size_y);
+  free_board(&b);
 
   set_input_mode(0);
   return 0;
