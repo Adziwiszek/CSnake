@@ -228,6 +228,19 @@ void print_board(Board* b, SnakeData* s) {
   }
 }
 
+void reset_board(Board* b) {
+  for(int i = 0; i < b->size_y; i++) {
+    for(int j = 0; j < b->size_x; j++) {
+      if(i == 0 || j == 0 || j == b->size_x - 1 || i == b->size_y - 1) {
+        b->map[i][j] = Border;
+      }
+      else {
+        b->map[i][j] = Empty;
+      }
+    }
+  }
+}
+
 void init_empty_board(Board* b, int size_x, int size_y) {
   b->food = 0;
   b->size_y = size_y;
@@ -250,17 +263,7 @@ void init_empty_board(Board* b, int size_x, int size_y) {
       exit_program("Malloc error");
     }
   }
-  
-  for(int i = 0; i < b->size_y; i++) {
-    for(int j = 0; j < b->size_x; j++) {
-      if(i == 0 || j == 0 || j == b->size_x - 1 || i == b->size_y - 1) {
-        b->map[i][j] = Border;
-      }
-      else {
-        b->map[i][j] = Empty;
-      }
-    }
-  }
+  reset_board(b);  
 }
 
 void free_board(Board* b) {
@@ -274,31 +277,13 @@ void free_board(Board* b) {
 
 // ============================================================================
 
-void init_snake(SnakeData* snake, Board* b) {
+void reset_snake(SnakeData* snake, Board* b) {
   snake->start = (Point){.x = 3, .y = 2};
   snake->end = (Point){.x = 2, .y = 2};
   snake->direction = RIGHT;
   snake->tummy = 0;
   snake->animation = 0;
 
-  snake->dirMap = malloc(b->size_y * sizeof(Dir*));
-  if(snake->dirMap == NULL) {
-    fprintf(stderr, "Malloc error for rows\n");
-    exit_program("Malloc error");
-  }
-  
-  for(int i = 0; i < b->size_y; i++) {
-    snake->dirMap[i] = malloc(b->size_x * sizeof(Dir));
-    if (b->map[i] == NULL) {
-      fprintf(stderr, "Mallloc error for row: %d\n", i);
-      for(int j = 0; j < i; j++) {
-        free(snake->dirMap[j]);
-      }
-      free(snake->dirMap);
-      exit_program("Malloc error");
-    }
-  }
-  
   for(int i = 0; i < b->size_y; i++) {
     for(int j = 0; j < b->size_x; j++) {
       snake->dirMap[i][j] = NIL;
@@ -321,6 +306,29 @@ void init_snake(SnakeData* snake, Board* b) {
 
   b->map[snake_body.y][snake_body.x] = Snake;
   snake->dirMap[snake_body.y][snake_body.x] = snake->direction; 
+}
+
+void init_snake(SnakeData* snake, Board* b) {
+
+  snake->dirMap = malloc(b->size_y * sizeof(Dir*));
+  if(snake->dirMap == NULL) {
+    fprintf(stderr, "Malloc error for rows\n");
+    exit_program("Malloc error");
+  }
+  
+  for(int i = 0; i < b->size_y; i++) {
+    snake->dirMap[i] = malloc(b->size_x * sizeof(Dir));
+    if (b->map[i] == NULL) {
+      fprintf(stderr, "Mallloc error for row: %d\n", i);
+      for(int j = 0; j < i; j++) {
+        free(snake->dirMap[j]);
+      }
+      free(snake->dirMap);
+      exit_program("Malloc error");
+    }
+  }
+ 
+  reset_snake(snake, b);
 }
 
 void free_snake(SnakeData* s, int board_size_y) {
@@ -419,7 +427,7 @@ void set_snake_direction(char c, SnakeData* s) {
         s->direction = DOWN;
       break;
     default:
-      printf("unsuported input: %c\n", c);
+      printf("unsupported input: %c\n", c);
   }
 }
 
@@ -474,7 +482,11 @@ char dir_to_char(Dir m) {
   }
 }
 
-void reset_env();
+void reset_env(Board* b, SnakeData* s) {
+  reset_board(b);
+  reset_snake(s, b);
+}
+
 Dir e_greedy() {
   int p = (rand() % 100) % 4;
   switch(p) {
@@ -496,7 +508,7 @@ void execute_move(SnakeData *s, Dir move) {
 
 ExpArray replay_buffer;
 
-void run_simulation(Board* b, SnakeData *s, int verbose) {
+void run_simulation(Board* b, SnakeData *s, int verbose, int iter) {
   while(!lost_game) {
     Dir move = e_greedy();
 
@@ -506,6 +518,7 @@ void run_simulation(Board* b, SnakeData *s, int verbose) {
 
     if(verbose) {
       clear_screen();
+      printf("iteration %d\n", iter);
       print_board(b, s);
       printf("Snake made move: %c\n", dir_to_char(move));
       nanosleep(&ts, NULL);
@@ -520,22 +533,19 @@ void run_simulation(Board* b, SnakeData *s, int verbose) {
  * model
  * params
  */
-void train() {
-  /*
-  FOR each episode:
-    reset environment
-    s = initial state
+void train(int n_iters) {
+  Board b;
+  init_empty_board(&b, 10, 10);
+  SnakeData snake;
+  init_snake(&snake, &b);
 
-    WHILE not done:
-        choose a from s using epsilon-greedy
-        take action a → get s', r, done
-        store (s, a, r, s', done)
-        sample batch and train Q
-        s ← s'
+  for(int iter = 1; iter <= n_iters; iter++) {
+    run_simulation(&b, &snake, 1, iter);
+    reset_env(&b, &snake);
+  }
 
-    decay epsilon
-  END
-  */
+  free_snake(&snake, b.size_y);
+  free_board(&b);
 }
 
 //------------------------------------------------------------------------------
@@ -620,15 +630,7 @@ int main() {
 
   //main_loop();
 
-  Board b;
-  init_empty_board(&b, 10, 10);
-  SnakeData snake;
-  init_snake(&snake, &b);
-
-  run_simulation(&b, &snake, 1);
-
-  free_snake(&snake, b.size_y);
-  free_board(&b);
+  train(4);
 
   set_input_mode(0);
   return 0;
