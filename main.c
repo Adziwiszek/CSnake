@@ -24,6 +24,12 @@
        __typeof__ (b) _b = (b); \
      _a > _b ? _a : _b; })
 
+typedef struct {
+  float** mat;
+  int rows;
+  int cols;
+} Matrix;
+
 typedef enum {
   UP,
   DOWN,
@@ -61,10 +67,11 @@ typedef struct {
 } Board;
 
 typedef struct {
-  BoardField** old_state;
-  BoardField** new_state;
-  Dir move;
+  Matrix* old_state;
+  Matrix* new_state;
+  int reward;
   int done;
+  Dir move;
 } Exp;
 
 typedef struct {
@@ -126,18 +133,31 @@ float rand_float(float a, float b) {
 
 //-----------------------------------------------------------------------------
 
-typedef struct {
-  float** mat;
-  int rows;
-  int cols;
-} Matrix;
 
-Matrix alloc_matrix(int n, int m) {
-  float** mat = malloc(n * sizeof(float*));
-  for(int i = 0; i < n; i++) {
-    mat[i] = malloc(m * sizeof(float));
+Matrix* alloc_matrix(int n, int m) {
+  Matrix* mat_struct = malloc(sizeof(Matrix));
+  if (!mat_struct) return NULL;
+
+  mat_struct->rows = n;
+  mat_struct->cols = m;
+
+  mat_struct->mat = malloc(n * sizeof(float*));
+  if (!mat_struct->mat) {
+      free(mat_struct);
+      return NULL;
   }
-  return (Matrix){.mat=mat, .rows=n, .cols=m};
+  for(int i = 0; i < n; i++) {
+    mat_struct->mat[i] = malloc(m * sizeof(float));
+    if (!mat_struct->mat[i]) {
+      for (int j = 0; j < i; j++) {
+        free(mat_struct->mat[j]);
+      }
+      free(mat_struct->mat);
+      free(mat_struct);
+      return NULL;
+    }
+  }
+  return mat_struct;
 }
 
 void free_matrix(Matrix* A) {
@@ -178,6 +198,29 @@ void print_matrix(Matrix* A) {
       printf("%f  ", A->mat[i][j]);
     }
     printf("\n");
+  }
+}
+
+/* Element-wise adds elements from B to A
+ */
+void elem_add(Matrix* A, Matrix* B) {
+  if(A->cols != B->cols || A->rows != B->rows ) {
+    exit_program(
+      "Tried to add matricies with sizes %dx%d, %dx%d to each other",
+      A->rows, A->cols, B->rows, B->cols);
+  }
+  for(int i = 0; i < A->rows; i++) {
+    for(int j = 0; j < A->cols; j++) {
+      A->mat[i][j] += B->mat[i][j];
+    }
+  }
+}
+
+void ReLU(Matrix* A) {
+  for(int i = 0; i < A->rows; i++) {
+    for(int j = 0; j < A->cols; j++) {
+      A->mat[i][j] = A->mat[i][j] > 0 ? A->mat[i][j] : 0;
+    }
   }
 }
 
@@ -275,6 +318,30 @@ void free_board(Board* b) {
   }
 }
 
+Matrix* board_to_matrix(Board* b) {
+  Matrix* mat = malloc(sizeof(Matrix));
+  mat = alloc_matrix(b->size_y, b->size_x);
+  for(int i = 0; i < mat->rows; i++) {
+    for(int j = 0; j < mat->cols; j++) {
+      switch(b->map[i][j]) {
+        case Border:
+          mat->mat[i][j] = -1.0;
+          break;
+        case Snake:
+          mat->mat[i][j] = 1.0;
+          break;
+        case Empty:
+          mat->mat[i][j] = 0.0;
+          break;
+        case Food:
+          mat->mat[i][j] = 1.0;
+          break;
+      }
+    }
+  }
+  return mat;
+}
+
 // ============================================================================
 
 void reset_snake(SnakeData* snake, Board* b) {
@@ -340,7 +407,7 @@ void free_snake(SnakeData* s, int board_size_y) {
   }
 }
 
-void update_snake(SnakeData* s, Board* b) {
+int update_snake(SnakeData* s, Board* b) {
   s->animation = s->animation == 0 ? 1 : 0;
   // change the direction at the turn
   s->dirMap[s->start.y][s->start.x] = s->direction; 
@@ -371,7 +438,7 @@ void update_snake(SnakeData* s, Board* b) {
       b->map[s->start.y][s->start.x] == Border) {
     //exit_program("snake eating itself!");
     lost_game = 1;
-    return;
+    return -50;
   }
   int ate = 0;
   if(b->map[s->start.y][s->start.x] == Food) {
@@ -383,7 +450,7 @@ void update_snake(SnakeData* s, Board* b) {
   b->map[s->start.y][s->start.x] = Snake;
 
   // if we ate food we make our snake longer by not reducing tail this frame
-  if(ate) return;
+  if(ate) return 50;
   // snake butt
   Point old_end = s->end;
   b->map[s->end.y][s->end.x] = Empty;
@@ -406,6 +473,7 @@ void update_snake(SnakeData* s, Board* b) {
       printf("unsupported direction %c\n", s->direction);
   }
   s->dirMap[old_end.y][old_end.x] = NIL;
+  return -1;
 }
 
 void set_snake_direction(char c, SnakeData* s) {
@@ -462,6 +530,10 @@ void print_snake_directions(SnakeData* s, Board* b) {
 
 // ============================================================================
 
+
+
+// ============================================================================
+
 char dir_to_char(Dir m) {
   switch(m) {
     case LEFT:
@@ -508,45 +580,6 @@ void execute_move(SnakeData *s, Dir move) {
 
 ExpArray replay_buffer;
 
-void run_simulation(Board* b, SnakeData *s, int verbose, int iter) {
-  while(!lost_game) {
-    Dir move = e_greedy();
-
-    execute_move(s, move);
-    update_snake(s, b);
-    generate_food(b, 50);
-
-    if(verbose) {
-      clear_screen();
-      printf("iteration %d\n", iter);
-      print_board(b, s);
-      printf("Snake made move: %c\n", dir_to_char(move));
-      nanosleep(&ts, NULL);
-    }
-  }
-
-  lost_game = 0;
-  return;
-}
-
-/* 
- * model
- * params
- */
-void train(int n_iters) {
-  Board b;
-  init_empty_board(&b, 10, 10);
-  SnakeData snake;
-  init_snake(&snake, &b);
-
-  for(int iter = 1; iter <= n_iters; iter++) {
-    run_simulation(&b, &snake, 1, iter);
-    reset_env(&b, &snake);
-  }
-
-  free_snake(&snake, b.size_y);
-  free_board(&b);
-}
 
 //------------------------------------------------------------------------------
 
@@ -608,25 +641,147 @@ void main_loop() {
 
 // ============================================================================
 
+typedef struct {
+  Matrix* W_1; 
+  Matrix* b_1;
+  Matrix* W_2;
+  Matrix* b_2;
+  int hidden;
+} Model;
+
+void init_model(Model* m, int hidden) {
+  m->hidden = hidden;
+  m->W_1 = alloc_matrix(hidden, 64);
+  m->b_1 = alloc_matrix(hidden, 1);
+  m->W_2 = alloc_matrix(4, hidden);
+  m->b_2 = alloc_matrix(4, 1);
+
+  rand_matrix(m->W_1, 0.0, 1.0);
+  rand_matrix(m->b_1, 0.0, 1.0);
+  rand_matrix(m->W_2, 0.0, 1.0);
+  rand_matrix(m->b_2, 0.0, 1.0);
+}
+
+void free_model(Model* m) {
+  free_matrix(m->W_1);
+  free_matrix(m->b_1);
+  free_matrix(m->W_2);
+  free_matrix(m->b_2);
+}
+
+Matrix* forward(Model* m, Matrix* X) {
+  Matrix* x_1 = alloc_matrix(m->hidden, 1);
+  Matrix* out = alloc_matrix(4, 1);
+
+  matmul(m->W_1, X, x_1);
+  elem_add(x_1, m->b_1);
+  ReLU(x_1);
+
+  matmul(m->W_2, x_1, out);
+  elem_add(out, m->b_2);
+
+  free_matrix(x_1);
+  return out;
+}
+
+Dir get_best_move(Matrix* out) {
+  Dir moves[] = {LEFT, RIGHT, UP, DOWN};
+  float max_val = out->mat[0][0];
+  int max_id = 0;
+  for(int i = 1; i < 4; i++) {
+    if(out->mat[i][0] > max_val) {
+      max_id = i;
+      max_val = out->mat[i][0];
+    }
+  }
+  return moves[max_id];
+}
+
+void backward(Model* m, ExpArray* rep_buffer) {
+  Exp *batch = &rep_buffer->arr[0];
+  //
+}
+
+Model* model;
+
+void run_simulation(Board* b, SnakeData *s, int verbose, int iter) {
+  while(!lost_game) {
+    Matrix *s_before = board_to_matrix(b);
+    Matrix *out = alloc_matrix(4, 1);
+
+    out = forward(model, s_before);
+    Dir move = get_best_move(out);
+
+    execute_move(s, move);
+    int reward = update_snake(s, b);
+    int done = lost_game;
+    generate_food(b, 50);
+
+    Matrix* s_after = board_to_matrix(b);
+
+    Exp new_experience = {.old_state=s_before, .new_state=s_after, 
+                          .done=done, .reward=reward, .move=move};
+
+    add_experience(&replay_buffer, new_experience);
+
+    backward(model, &replay_buffer);
+
+    if(verbose) {
+      clear_screen();
+      printf("iteration %d\n", iter);
+      print_board(b, s);
+      printf("Snake made move: %c\n", dir_to_char(move));
+      nanosleep(&ts, NULL);
+    }
+    free_matrix(out);
+  }
+  lost_game = 0;
+  return;
+}
+
+/* 
+ * model 
+ * params
+ */
+void train(int n_iters) {
+  Board b;
+  init_empty_board(&b, 10, 10);
+  SnakeData snake;
+  init_snake(&snake, &b);
+
+  replay_buffer.id = 0;
+
+  model = malloc(sizeof(Model));
+  init_model(model, 48);
+
+
+  for(int iter = 1; iter <= n_iters; iter++) {
+    run_simulation(&b, &snake, 1, iter);
+    reset_env(&b, &snake);
+  }
+
+  free_model(model);
+  free(model);
+  free_snake(&snake, b.size_y);
+  free_board(&b);
+}
+
 int main() {
   srand(time(NULL));
 
   set_input_mode(1);
 
-  /*
-  Matrix A = alloc_matrix(2, 4);
-  Matrix B = alloc_matrix(4, 2);
-  Matrix C = alloc_matrix(2, 2);
-  rand_matrix(&A, 0.0, 1.0);
-  rand_matrix(&B, 0.0, 1.0);
-  print_matrix(&A);
-  print_matrix(&B);
-  matmul(&A, &B, &C);
-  print_matrix(&C);
-  free_matrix(&A);
-  free_matrix(&B);
-  free_matrix(&C);
-  */
+  /*Matrix *S = alloc_matrix(64, 1);
+  rand_matrix(S, 0.0, 1.0);
+  Model* model = malloc(sizeof(Model));
+  init_model(model, 48);
+
+  Matrix *out = alloc_matrix(4, 1);
+  out = forward(model, S);
+
+  free_model(model);
+  free_matrix(S);
+  free(model);*/
 
   //main_loop();
 
