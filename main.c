@@ -11,7 +11,7 @@
 
 #define MAX_FOOD 1
 #define MIN_REFRESH_TIME 1000000L
-#define MAX_EXP_SIZE 1000
+#define MAX_EXP_SIZE 100000
 
 #define SNAKE_SYMBOL "O"
 #define SNAKE_OPEN_MOUTH "O"
@@ -29,12 +29,13 @@ typedef struct {
   int rows;
   int cols;
 } Matrix;
+void free_matrix(Matrix* A);
 
 typedef enum {
-  UP,
-  DOWN,
-  LEFT,
-  RIGHT,
+  UP = 0,
+  DOWN = 1,
+  LEFT = 2,
+  RIGHT = 3,
   NIL,
 } Dir;
 
@@ -79,8 +80,19 @@ typedef struct {
   size_t id;
 } ExpArray;
 
+int loop_back = 0;
 void add_experience(ExpArray* arr, Exp e) {
+  if(loop_back) {
+    free_matrix(arr->arr[arr->id + 1].old_state);
+    free_matrix(arr->arr[arr->id + 1].new_state);
+    free(arr->arr[arr->id + 1].old_state);
+    free(arr->arr[arr->id + 1].new_state);
+  }
   arr->arr[arr->id++] = e;
+  if(arr->id + 5 >= MAX_EXP_SIZE) {
+    arr->id = 0;
+    loop_back = 1;
+  }
 }
 
 void clear_screen() {
@@ -216,6 +228,19 @@ void elem_add(Matrix* A, Matrix* B) {
   }
 }
 
+void copy_matrix(Matrix* A, Matrix* B) {
+  if(A->cols != B->cols || A->rows != B->rows ) {
+    exit_program(
+      "Tried to copy matrix with size %dx%d to %dx%d",
+      A->rows, A->cols, B->rows, B->cols);
+  }
+  for(int i = 0; i < A->rows; i++) {
+    for(int j = 0; j < A->cols; j++) {
+      B->mat[i][j] = A->mat[i][j];
+    }
+  }
+}
+
 void ReLU(Matrix* A) {
   for(int i = 0; i < A->rows; i++) {
     for(int j = 0; j < A->cols; j++) {
@@ -272,6 +297,7 @@ void print_board(Board* b, SnakeData* s) {
 }
 
 void reset_board(Board* b) {
+  b->food = 0;
   for(int i = 0; i < b->size_y; i++) {
     for(int j = 0; j < b->size_x; j++) {
       if(i == 0 || j == 0 || j == b->size_x - 1 || i == b->size_y - 1) {
@@ -438,7 +464,7 @@ int update_snake(SnakeData* s, Board* b) {
       b->map[s->start.y][s->start.x] == Border) {
     //exit_program("snake eating itself!");
     lost_game = 1;
-    return -50;
+    return -500;
   }
   int ate = 0;
   if(b->map[s->start.y][s->start.x] == Food) {
@@ -450,7 +476,7 @@ int update_snake(SnakeData* s, Board* b) {
   b->map[s->start.y][s->start.x] = Snake;
 
   // if we ate food we make our snake longer by not reducing tail this frame
-  if(ate) return 50;
+  if(ate) return 100;
   // snake butt
   Point old_end = s->end;
   b->map[s->end.y][s->end.x] = Empty;
@@ -552,6 +578,7 @@ char dir_to_char(Dir m) {
       return 'a';
       break;
   }
+  return 'a';
 }
 
 void reset_env(Board* b, SnakeData* s) {
@@ -651,7 +678,7 @@ typedef struct {
 
 void init_model(Model* m, int hidden) {
   m->hidden = hidden;
-  m->W_1 = alloc_matrix(hidden, 64);
+  m->W_1 = alloc_matrix(hidden, 100);
   m->b_1 = alloc_matrix(hidden, 1);
   m->W_2 = alloc_matrix(4, hidden);
   m->b_2 = alloc_matrix(4, 1);
@@ -669,40 +696,145 @@ void free_model(Model* m) {
   free_matrix(m->b_2);
 }
 
+Matrix* flatten(Matrix* A) {
+  Matrix* x = alloc_matrix(A->rows * A->cols, 1);
+  for(int i = 0; i < A->rows; i++) {
+    for(int j = 0; j < A->cols; j++) {
+      x->mat[i * A->cols + j][0] = A->mat[i][j];
+    }
+  }
+  return x;
+}
+
 Matrix* forward(Model* m, Matrix* X) {
+  Matrix* X_flat = flatten(X);
   Matrix* x_1 = alloc_matrix(m->hidden, 1);
   Matrix* out = alloc_matrix(4, 1);
 
-  matmul(m->W_1, X, x_1);
+  matmul(m->W_1, X_flat, x_1);
   elem_add(x_1, m->b_1);
   ReLU(x_1);
 
   matmul(m->W_2, x_1, out);
   elem_add(out, m->b_2);
 
+  free_matrix(X_flat);
   free_matrix(x_1);
+  free(X_flat);
+  free(x_1);
   return out;
 }
 
-Dir get_best_move(Matrix* out) {
-  Dir moves[] = {LEFT, RIGHT, UP, DOWN};
-  float max_val = out->mat[0][0];
-  int max_id = 0;
-  for(int i = 1; i < 4; i++) {
-    if(out->mat[i][0] > max_val) {
-      max_id = i;
-      max_val = out->mat[i][0];
+Dir get_best_move(Matrix* out, float eps) {
+  Dir moves[] = {UP, DOWN, LEFT, RIGHT};
+  float exploration = rand_float(0.0, 1.0);
+  
+  if(exploration > eps) {
+    return moves[rand() % 4];
+  } else {
+    float max_val = out->mat[0][0];
+    int max_id = 0;
+    for(int i = 1; i < 4; i++) {
+      if(out->mat[i][0] > max_val) {
+        max_id = i;
+        max_val = out->mat[i][0];
+      }
+    }
+    return moves[max_id];
+  }
+}
+
+float max_reward(Matrix* Q) {
+  float max_r = 0.0;
+  for(int i = 0; i < Q->rows; i++) {
+    if(Q->mat[i][0] > max_r) {
+      max_r = Q->mat[i][0];
     }
   }
-  return moves[max_id];
+  return max_r;
 }
 
 void backward(Model* m, ExpArray* rep_buffer) {
-  Exp *batch = &rep_buffer->arr[0];
-  //
+  float gamma = 0.3;
+  float lr = 0.1;
+  // get random memory and calculate loss
+  Exp* batch = &rep_buffer->arr[rand() % rep_buffer->id];
+  //Matrix* Q_pred = forward(m, batch->old_state);
+  Matrix* X_flat = flatten(batch->old_state);
+  Matrix* x_1 = alloc_matrix(m->hidden, 1);
+  Matrix* x_1_act = alloc_matrix(m->hidden, 1);
+
+  matmul(m->W_1, X_flat, x_1);
+  elem_add(x_1, m->b_1);
+  copy_matrix(x_1, x_1_act);
+  ReLU(x_1_act);
+
+  Matrix* Q_pred = alloc_matrix(4, 1);
+  matmul(m->W_2, x_1, Q_pred);
+  elem_add(Q_pred, m->b_2);
+
+  float Q_sa = Q_pred->mat[batch->move][0];
+  float target = 0.0;
+
+  if(batch->done) {
+    target = batch->reward;
+  } else {
+    Matrix* Q_new = forward(m, batch->new_state);
+    float max_Q_new = max_reward(Q_new); 
+    target = batch->reward + gamma * max_Q_new;
+    free_matrix(Q_new);
+    free(Q_new);
+  }
+
+  //float loss = (Q_sa - target) * (Q_sa - target);
+  // do gradient descent
+  int a = batch->move;
+  float l_d = 2 * (Q_sa - target);
+
+  // W_2, b_2
+  for(int i = 0; i < 4; i++) {
+    for(int j = 0; j < m->hidden; j++) {
+      float grad = (i == a ? 1.0f : 0.0f) * l_d * x_1_act->mat[j][0];
+      m->W_2->mat[i][j] -= lr * grad;
+    }
+    float grad_b = (i == a ? 1.0f : 0.0f) * l_d;
+    m->b_2->mat[i][0] -= lr * grad_b;
+  }
+  
+  // propagate through ReLU
+  Matrix* delta1 = alloc_matrix(m->hidden, 1); // dL/dx1
+
+  for(int j = 0; j < m->hidden; j++) {
+    float grad = m->W_2->mat[a][j] * l_d;
+    // pochodna ReLU
+    if(x_1->mat[j][0] <= 0.0f) grad = 0.0f;
+    delta1->mat[j][0] = grad;
+  }
+
+  // W_1, b_1
+  for(int i = 0; i < m->hidden; i++) {
+    for(int j = 0; j < X_flat->rows; j++) {
+      float grad = delta1->mat[i][0] * X_flat->mat[j][0];
+      m->W_1->mat[i][j] -= lr * grad;
+    }
+    m->b_1->mat[i][0] -= lr * delta1->mat[i][0];
+  }
+   
+  free_matrix(delta1);
+  free_matrix(Q_pred);
+  free_matrix(X_flat);
+  free_matrix(x_1);
+  free_matrix(x_1_act);
+  free(delta1);
+  free(Q_pred);
+  free(X_flat);
+  free(x_1);
+  free(x_1_act);
 }
 
 Model* model;
+float exploration = 0.5;
+int batch_size = 7;
 
 void run_simulation(Board* b, SnakeData *s, int verbose, int iter) {
   while(!lost_game) {
@@ -710,12 +842,13 @@ void run_simulation(Board* b, SnakeData *s, int verbose, int iter) {
     Matrix *out = alloc_matrix(4, 1);
 
     out = forward(model, s_before);
-    Dir move = get_best_move(out);
+    Dir move = get_best_move(out, exploration);
+    exploration *= 0.9999;
 
     execute_move(s, move);
     int reward = update_snake(s, b);
     int done = lost_game;
-    generate_food(b, 50);
+    generate_food(b, 10);
 
     Matrix* s_after = board_to_matrix(b);
 
@@ -724,7 +857,10 @@ void run_simulation(Board* b, SnakeData *s, int verbose, int iter) {
 
     add_experience(&replay_buffer, new_experience);
 
-    backward(model, &replay_buffer);
+    int batch = replay_buffer.id < batch_size ? replay_buffer.id : batch_size;
+    for(int i = 0; i < batch; i++) {
+      backward(model, &replay_buffer);
+    }
 
     if(verbose) {
       clear_screen();
@@ -743,7 +879,7 @@ void run_simulation(Board* b, SnakeData *s, int verbose, int iter) {
  * model 
  * params
  */
-void train(int n_iters) {
+void train(int n_iters, int verbose) {
   Board b;
   init_empty_board(&b, 10, 10);
   SnakeData snake;
@@ -754,10 +890,11 @@ void train(int n_iters) {
   model = malloc(sizeof(Model));
   init_model(model, 48);
 
+  int log_every = (int)(n_iters / 10);
 
   for(int iter = 1; iter <= n_iters; iter++) {
-    run_simulation(&b, &snake, 1, iter);
     reset_env(&b, &snake);
+    run_simulation(&b, &snake, verbose, iter);
   }
 
   free_model(model);
@@ -785,7 +922,9 @@ int main() {
 
   //main_loop();
 
-  train(4);
+  train(2000, 0);
+  exploration = 0.0;
+  train(5, 1);
 
   set_input_mode(0);
   return 0;
