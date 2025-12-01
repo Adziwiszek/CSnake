@@ -642,7 +642,7 @@ void main_loop() {
 
     update_snake(&snake, &b);
     if(snake.tummy % 4 == 0 && !updated_time) {
-      ts.tv_nsec -= 10000000;
+      ts.tv_nsec -= 20000000;
       ts.tv_nsec = max(ts.tv_nsec, MIN_REFRESH_TIME);
       updated_time = 1;
     }
@@ -920,11 +920,13 @@ int main() {
   free_matrix(S);
   free(model);*/
 
-  //main_loop();
+  main_loop();
 
+  /*
   train(2000, 0);
   exploration = 0.0;
   train(5, 1);
+  */
 
   set_input_mode(0);
   return 0;
